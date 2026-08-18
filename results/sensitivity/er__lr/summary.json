@@ -1,0 +1,61 @@
+{
+  "method": "er",
+  "gradient_projection": false,
+  "relationship_shift_detection": false,
+  "swept_param": "lr",
+  "base_config": {
+    "method": "er",
+    "data_dir": ".",
+    "subjects": [
+      "01",
+      "02",
+      "03"
+    ],
+    "memory_size": 200,
+    "epochs_per_subject": 3,
+    "new_batch_size": 32,
+    "mem_batch_size": 32,
+    "lr": 0.001,
+    "test_fraction": 0.2,
+    "seed": 0,
+    "gradient_projection": false,
+    "relationship_shift_detection": false,
+    "confidence_signal_type": "loss",
+    "confidence_window_size": 40,
+    "confidence_min_segment_length": 5,
+    "gmed_edit_lr": 0.1,
+    "out_dir": "results",
+    "run_name": null,
+    "checkpoint_every": 1,
+    "resume": false
+  },
+  "points": [
+    {
+      "param": "lr",
+      "value": 0.0003,
+      "bwt": 0.054440235690235705,
+      "forgetting": 0.005787037037037035,
+      "final_avg_acc": 0.30941358024691357,
+      "elapsed_seconds": 162.8338499069214,
+      "run_dir": "results\\er\\sens_lr_0.0003_seed0_mem200_subj01-02-03"
+    },
+    {
+      "param": "lr",
+      "value": 0.001,
+      "bwt": -0.03657407407407409,
+      "forgetting": 0.03657407407407409,
+      "final_avg_acc": 0.3111672278338945,
+      "elapsed_seconds": 157.04989075660706,
+      "run_dir": "results\\er\\sens_lr_0.001_seed0_mem200_subj01-02-03"
+    },
+    {
+      "param": "lr",
+      "value": 0.003,
+      "bwt": 0.009006734006734018,
+      "forgetting": 0.0046296296296296224,
+      "final_avg_acc": 0.3822109988776656,
+      "elapsed_seconds": 154.32455968856812,
+      "run_dir": "results\\er\\sens_lr_0.003_seed0_mem200_subj01-02-03"
+    }
+  ]
+}

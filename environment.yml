@@ -1,0 +1,17 @@
+# Conda alternative to requirements.txt, for Lightning AI Studios/Jobs
+# that provision via conda. Same pins as requirements.txt -- see that
+# file's header comment for why these versions are not to be bumped
+# casually.
+name: mudvi-eeg
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - torch==2.12.1
+      - mne==1.12.1
+      - numpy==2.1.3
+      - scipy==1.16.0
+      - matplotlib==3.10.3

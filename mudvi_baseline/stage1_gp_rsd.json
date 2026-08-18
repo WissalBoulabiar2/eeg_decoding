@@ -1,0 +1,41 @@
+{
+  "acc_matrix": {
+    "0": {
+      "01": 0.39090909090909093
+    },
+    "1": {
+      "01": 0.3340909090909091,
+      "02": 0.17824074074074073
+    },
+    "2": {
+      "01": 0.27045454545454545,
+      "02": 0.19675925925925927,
+      "03": 0.4375
+    }
+  },
+  "bwt": -0.05096801346801347,
+  "memory_class_counts": {
+    "0": 50,
+    "1": 50,
+    "2": 50,
+    "3": 50
+  },
+  "gradient_projection": true,
+  "relationship_shift_detection": true,
+  "gradient_projection_stats": {
+    "total_steps": 324,
+    "conflict_steps": 153,
+    "conflict_rate": 0.4722222222222222,
+    "avg_dot_before": 0.0004500568254037335,
+    "avg_dot_after": 0.03203711637076965,
+    "avg_mem_loss_before": 1.346615493297577,
+    "avg_mem_loss_after": 1.3464797293698345
+  },
+  "shift_detection_stats": {
+    "total_steps_logged": 324,
+    "mmd_shifts": 2,
+    "confidence_shifts": 5,
+    "final_shifts": 7,
+    "confidence_only_shifts": 5
+  }
+}

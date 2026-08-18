@@ -1,0 +1,26 @@
+{
+  "method": "mudvi",
+  "data_dir": ".",
+  "subjects": [
+    "03",
+    "01",
+    "02"
+  ],
+  "memory_size": 200,
+  "epochs_per_subject": 3,
+  "new_batch_size": 32,
+  "mem_batch_size": 32,
+  "lr": 0.001,
+  "test_fraction": 0.2,
+  "seed": 0,
+  "gradient_projection": true,
+  "relationship_shift_detection": false,
+  "confidence_signal_type": "loss",
+  "confidence_window_size": 40,
+  "confidence_min_segment_length": 5,
+  "gmed_edit_lr": 0.1,
+  "out_dir": "results",
+  "run_name": "subjorder_02_seed0_mem200_subj03-01-02",
+  "checkpoint_every": 1,
+  "resume": false
+}

@@ -1,0 +1,44 @@
+{
+  "method": "mudvi",
+  "subjects": [
+    "03",
+    "01",
+    "02"
+  ],
+  "seed": 0,
+  "acc_matrix": {
+    "0": {
+      "03": 0.39814814814814814
+    },
+    "1": {
+      "03": 0.38425925925925924,
+      "01": 0.35909090909090907
+    },
+    "2": {
+      "03": 0.39351851851851855,
+      "01": 0.3431818181818182,
+      "02": 0.22916666666666666
+    }
+  },
+  "bwt": -0.010269360269360234,
+  "forgetting": 0.010269360269360234,
+  "final_avg_acc": 0.32195566778900114,
+  "memory_class_counts": {
+    "0": 50,
+    "1": 50,
+    "2": 50,
+    "3": 50
+  },
+  "gradient_projection": true,
+  "relationship_shift_detection": false,
+  "elapsed_seconds": 196.0483078956604,
+  "gradient_projection_stats": {
+    "total_steps": 327,
+    "conflict_steps": 157,
+    "conflict_rate": 0.4801223241590214,
+    "avg_dot_before": -0.00458164735003346,
+    "avg_dot_after": 0.06437888289716334,
+    "avg_mem_loss_before": 1.3297151596903436,
+    "avg_mem_loss_after": 1.3291091131507804
+  }
+}

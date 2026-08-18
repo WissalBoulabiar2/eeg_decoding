@@ -1,0 +1,25 @@
+{
+  "method": "mudvi",
+  "data_dir": "c:/Users/boula/Downloads/BCICIV_2a_gdf",
+  "subjects": [
+    "01",
+    "02",
+    "03"
+  ],
+  "memory_size": 200,
+  "epochs_per_subject": 15,
+  "new_batch_size": 32,
+  "mem_batch_size": 32,
+  "lr": 0.001,
+  "test_fraction": 0.2,
+  "seed": 0,
+  "gradient_projection": false,
+  "relationship_shift_detection": true,
+  "confidence_signal_type": "loss",
+  "confidence_window_size": 40,
+  "confidence_min_segment_length": 5,
+  "out_dir": "results/validation",
+  "run_name": "rsd_only_3subj_15ep_POSTFIX_VALIDATION",
+  "checkpoint_every": 1,
+  "resume": false
+}

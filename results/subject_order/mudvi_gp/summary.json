@@ -1,0 +1,104 @@
+{
+  "method": "mudvi",
+  "gradient_projection": true,
+  "relationship_shift_detection": false,
+  "training_seed": 0,
+  "order_seed": 0,
+  "num_orders": 6,
+  "base_config": {
+    "method": "mudvi",
+    "data_dir": ".",
+    "subjects": [
+      "01",
+      "02",
+      "03"
+    ],
+    "memory_size": 200,
+    "epochs_per_subject": 3,
+    "new_batch_size": 32,
+    "mem_batch_size": 32,
+    "lr": 0.001,
+    "test_fraction": 0.2,
+    "seed": 0,
+    "gradient_projection": true,
+    "relationship_shift_detection": false,
+    "confidence_signal_type": "loss",
+    "confidence_window_size": 40,
+    "confidence_min_segment_length": 5,
+    "gmed_edit_lr": 0.1,
+    "out_dir": "results",
+    "run_name": null,
+    "checkpoint_every": 1,
+    "resume": false
+  },
+  "points": [
+    {
+      "order_index": 0,
+      "is_canonical": true,
+      "subject_order": "01-02-03",
+      "bwt": -0.05096801346801347,
+      "forgetting": 0.06022727272727274,
+      "final_avg_acc": 0.3015712682379349,
+      "elapsed_seconds": 203.17352867126465,
+      "run_dir": "results\\mudvi_gp\\subjorder_00_seed0_mem200_subj01-02-03"
+    },
+    {
+      "order_index": 1,
+      "is_canonical": false,
+      "subject_order": "03-02-01",
+      "bwt": 0.0011574074074073987,
+      "forgetting": 0.024305555555555552,
+      "final_avg_acc": 0.325645342312009,
+      "elapsed_seconds": 198.12659978866577,
+      "run_dir": "results\\mudvi_gp\\subjorder_01_seed0_mem200_subj03-02-01"
+    },
+    {
+      "order_index": 2,
+      "is_canonical": false,
+      "subject_order": "03-01-02",
+      "bwt": -0.010269360269360234,
+      "forgetting": 0.010269360269360234,
+      "final_avg_acc": 0.32195566778900114,
+      "elapsed_seconds": 196.0483078956604,
+      "run_dir": "results\\mudvi_gp\\subjorder_02_seed0_mem200_subj03-01-02"
+    },
+    {
+      "order_index": 3,
+      "is_canonical": false,
+      "subject_order": "01-03-02",
+      "bwt": -0.02487373737373738,
+      "forgetting": 0.03181818181818183,
+      "final_avg_acc": 0.31973905723905727,
+      "elapsed_seconds": 191.89704370498657,
+      "run_dir": "results\\mudvi_gp\\subjorder_03_seed0_mem200_subj01-03-02"
+    },
+    {
+      "order_index": 4,
+      "is_canonical": false,
+      "subject_order": "02-01-03",
+      "bwt": -0.07319023569023568,
+      "forgetting": 0.07319023569023568,
+      "final_avg_acc": 0.2853395061728395,
+      "elapsed_seconds": 192.0159251689911,
+      "run_dir": "results\\mudvi_gp\\subjorder_04_seed0_mem200_subj02-01-03"
+    },
+    {
+      "order_index": 5,
+      "is_canonical": false,
+      "subject_order": "02-03-01",
+      "bwt": 0.009259259259259259,
+      "forgetting": 0.0011574074074073987,
+      "final_avg_acc": 0.2913439955106622,
+      "elapsed_seconds": 192.41603231430054,
+      "run_dir": "results\\mudvi_gp\\subjorder_05_seed0_mem200_subj02-03-01"
+    }
+  ],
+  "aggregate": {
+    "bwt_mean": -0.024814113355780015,
+    "bwt_std": 0.02907273554576327,
+    "forgetting_mean": 0.03349466891133557,
+    "forgetting_std": 0.025699331979013616,
+    "final_avg_acc_mean": 0.30759913954358403,
+    "final_avg_acc_std": 0.015680184719797884
+  }
+}

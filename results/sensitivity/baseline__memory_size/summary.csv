@@ -1,0 +1,3 @@
+param,value,bwt,forgetting,final_avg_acc,elapsed_seconds,run_dir
+memory_size,50,-0.018623737373737376,0.024305555555555552,0.30152918069584733,142.70290970802307,results\baseline\sens_memory_size_50_seed0_mem200_subj01-02-03
+memory_size,200,-0.032912457912457935,0.035227272727272746,0.31206509539842875,878.8630037307739,results\baseline\sens_memory_size_200_seed0_mem200_subj01-02-03

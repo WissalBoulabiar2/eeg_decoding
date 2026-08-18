@@ -1,0 +1,3 @@
+param,value,bwt,forgetting,final_avg_acc,elapsed_seconds,run_dir
+memory_size,50,0.007175925925925905,0.012500000000000011,0.3411054994388327,199.55043721199036,results\mudvi_gp\sens_memory_size_50_seed0_mem200_subj01-02-03
+memory_size,200,-0.05096801346801347,0.06022727272727274,0.3015712682379349,191.75807285308838,results\mudvi_gp\sens_memory_size_200_seed0_mem200_subj01-02-03

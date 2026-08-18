@@ -1,0 +1,26 @@
+# Données brutes EEG (a mettre sur Kaggle Datasets / Drive)
+*.gdf
+
+# Checkpoints modeles
+*.pt
+*.pth
+*.ckpt
+**/checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Environnements
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local
+.claude/

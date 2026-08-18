@@ -1,0 +1,16 @@
+# Pinned to versions verified locally against the existing implementation
+# (mudvi_baseline/) -- do not bump without re-verifying data.py's GDF
+# parsing and trainer.py's checkpoint (de)serialization still behave
+# identically, per "do not unnecessarily upgrade packages" (Lightning AI
+# migration brief, Section 10).
+#
+# torch: pip wheels for Linux bundle CUDA already, so this same pin picks
+# up GPU support automatically on a Lightning AI GPU instance -- no
+# separate --extra-index-url / +cu12x suffix needed. Locally (Windows, no
+# GPU) this resolves to the CPU build; torch.device() selection in
+# run_experiment.py/trainer.py already falls back to CPU transparently.
+torch==2.12.1
+mne==1.12.1
+numpy==2.1.3
+scipy==1.16.0
+matplotlib==3.10.3
