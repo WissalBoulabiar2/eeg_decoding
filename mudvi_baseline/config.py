@@ -54,6 +54,16 @@ class ExperimentConfig:
     confidence_window_size: int = 40
     confidence_min_segment_length: int = 5
 
+    # MUDVI-only extension: OCAR (Online Curvature-Aware Replay, Urettini
+    # & Carta, ICML 2025 -- see ocar.py). Same "MUDVI-specific, not
+    # hybridized into er/mir/gmed" convention as gradient_projection/
+    # relationship_shift_detection above. Can be combined with
+    # gradient_projection (the "MUDVI+OCAR+GP" ablation condition,
+    # see trainer.ContinualTrainer._train_step_ocar).
+    ocar: bool = False
+    ocar_ema_decay: float = 0.95
+    ocar_damping: float = 1e-3
+
     # GMED-only extension (gmed_baseline.GMEDTrainer). Ignored for every
     # other method, same convention as the MUDVI-only fields above.
     gmed_edit_lr: float = 0.1
@@ -65,18 +75,25 @@ class ExperimentConfig:
     resume: bool = False
 
     def result_subdir(self) -> str:
-        """Maps (method, gradient_projection, relationship_shift_detection)
-        to the results/ layout requested for the Lightning migration:
-        results/{baseline,er,mir,gmed,mudvi_gp,mudvi_rsd,mudvi_gp_rsd}/."""
+        """Maps (method, gradient_projection, relationship_shift_detection,
+        ocar) to the results/ layout requested for the Lightning
+        migration: results/{baseline,er,mir,gmed,mudvi_gp,mudvi_rsd,
+        mudvi_gp_rsd,mudvi_ocar,mudvi_ocar_gp}/. `ocar` combined with
+        `relationship_shift_detection` (RSD stays diagnostic-only, see
+        trainer.py, so this combination changes no accuracy result but is
+        still given its own subfolder for run-isolation)."""
         if self.method != "mudvi":
             return self.method  # results/er/, results/mir/, results/gmed/
-        if self.gradient_projection and self.relationship_shift_detection:
-            return "mudvi_gp_rsd"
+        parts = ["mudvi"]
+        if self.ocar:
+            parts.append("ocar")
         if self.gradient_projection:
-            return "mudvi_gp"
+            parts.append("gp")
         if self.relationship_shift_detection:
-            return "mudvi_rsd"
-        return "baseline"
+            parts.append("rsd")
+        if len(parts) == 1:
+            return "baseline"
+        return "_".join(parts)
 
     def run_id(self) -> str:
         if self.run_name:
@@ -121,6 +138,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--confidence_window_size", type=int, default=40)
     parser.add_argument("--confidence_min_segment_length", type=int, default=5)
 
+    parser.add_argument("--ocar", action="store_true",
+                         help="MUDVI only. Online Curvature-Aware Replay (Urettini & Carta, "
+                              "ICML 2025) -- K-FAC curvature-preconditioned replay update, see "
+                              "ocar.py. Ignored for --method er/mir/gmed. May be combined with "
+                              "--gradient_projection (the MUDVI+OCAR+GP ablation condition).")
+    parser.add_argument("--ocar_ema_decay", type=float, default=0.95,
+                         help="EMA decay for the running K-FAC/diagonal curvature estimate.")
+    parser.add_argument("--ocar_damping", type=float, default=1e-3,
+                         help="Tikhonov damping added before inverting the K-FAC factors "
+                              "(and added to the diagonal-fallback denominator).")
+
     parser.add_argument("--gmed_edit_lr", type=float, default=0.1,
                          help="GMED only (gradient-ascent input-space edit step size). "
                               "Ignored for --method mudvi/er/mir.")
@@ -144,9 +172,11 @@ def parse_config(argv=None) -> ExperimentConfig:
             "No dataset path given: pass --data_dir or set the BCICIV_DATA_DIR "
             "environment variable (see LIGHTNING_MIGRATION.md)."
         )
-    if args.method in ("er", "mir", "gmed") and (args.gradient_projection or args.relationship_shift_detection):
+    if args.method in ("er", "mir", "gmed") and (
+        args.gradient_projection or args.relationship_shift_detection or args.ocar
+    ):
         raise SystemExit(
-            f"--gradient_projection/--relationship_shift_detection are MUDVI-only "
+            f"--gradient_projection/--relationship_shift_detection/--ocar are MUDVI-only "
             f"extensions and are not defined for --method {args.method}. "
             f"Remove them or switch to --method mudvi."
         )
@@ -166,6 +196,9 @@ def parse_config(argv=None) -> ExperimentConfig:
         confidence_signal_type=args.confidence_signal_type,
         confidence_window_size=args.confidence_window_size,
         confidence_min_segment_length=args.confidence_min_segment_length,
+        ocar=args.ocar,
+        ocar_ema_decay=args.ocar_ema_decay,
+        ocar_damping=args.ocar_damping,
         gmed_edit_lr=args.gmed_edit_lr,
         out_dir=args.out_dir,
         run_name=args.run_name,

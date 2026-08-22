@@ -46,6 +46,22 @@ Extension points:
     exactly like `shift_detector` above -- never gates training or the
     memory buffer. When False (default), none of this runs and
     `train_on_subject` is byte-for-byte the original baseline behavior.
+  - `use_ocar`: Online Curvature-Aware Replay (Urettini & Carta, ICML
+    2025 -- see `ocar.py`'s module docstring for the full citation and
+    scope). When True (and the memory buffer is non-empty), `_train_step`
+    dispatches to `_train_step_ocar`, which -- like
+    `_train_step_gradient_projection` -- computes the memory-batch and
+    new-data gradients SEPARATELY, but instead of (or, if
+    `use_gradient_projection` is ALSO True, in addition to) GP's
+    directional-conflict projection, rescales the combined gradient with
+    a running Kronecker-Factored-Approximate-Curvature (K-FAC) estimate
+    before the single `optimizer.step()`. Takes priority over
+    `use_gradient_projection` in `_train_step`'s dispatch (i.e.
+    `use_ocar=True, use_gradient_projection=True` runs GP's projection
+    THEN OCAR's curvature preconditioning inside `_train_step_ocar`, not
+    two separate steps) -- this is the "MUDVI+OCAR+GP" ablation
+    condition. When False (default), none of this runs and
+    `_train_step` is unchanged.
 """
 from __future__ import annotations
 
@@ -65,6 +81,7 @@ from .gradient_projection import (
     GradientProjectionStats,
 )
 from .confidence_detector import ConfidenceShiftDetector, freeze_reference_model
+from .ocar import KFACPreconditioner, OCARStats
 
 
 class ContinualTrainer:
@@ -76,7 +93,10 @@ class ContinualTrainer:
                  relationship_shift_detection: bool = False,
                  confidence_signal_type: str = "loss",
                  confidence_window_size: int = 40,
-                 confidence_min_segment_length: int = 5):
+                 confidence_min_segment_length: int = 5,
+                 use_ocar: bool = False,
+                 ocar_ema_decay: float = 0.95,
+                 ocar_damping: float = 1e-3):
         self.model = model.to(device)
         self.memory = memory
         self.device = device
@@ -89,6 +109,15 @@ class ContinualTrainer:
         self.shift_detector = shift_detector or OracleShiftDetector()
         self.use_gradient_projection = use_gradient_projection
         self.gp_stats = GradientProjectionStats() if use_gradient_projection else None
+
+        # OCAR (Online Curvature-Aware Replay) -- see module docstring
+        # above and `ocar.py` for the full mechanism/scope.
+        self.use_ocar = use_ocar
+        self.ocar_preconditioner = (
+            KFACPreconditioner(self.model, device, ema_decay=ocar_ema_decay, damping=ocar_damping)
+            if use_ocar else None
+        )
+        self.ocar_stats = OCARStats() if use_ocar else None
 
         # Addition 2 (Confidence-Based Relationship-Shift Detection).
         self.relationship_shift_detection = relationship_shift_detection
@@ -103,9 +132,15 @@ class ContinualTrainer:
 
     def _train_step(self, X_new: np.ndarray, y_new: np.ndarray,
                      X_mem: np.ndarray, y_mem: np.ndarray):
-        # Gradient projection only makes sense once the memory buffer has
-        # something in it; on the very first subject (empty memory) both
-        # modes are identical, so fall back to the baseline step.
+        # OCAR/GP only make sense once the memory buffer has something in
+        # it; on the very first subject (empty memory) every mode is
+        # identical, so fall back to the baseline step. OCAR takes
+        # priority in dispatch: when both flags are set,
+        # `_train_step_ocar` itself applies GP's conflict-projection
+        # before curvature-preconditioning (the "MUDVI+OCAR+GP" ablation
+        # condition), so there is no separate GP-only branch to reach.
+        if self.use_ocar and len(y_mem) > 0:
+            return self._train_step_ocar(X_new, y_new, X_mem, y_mem)
         if self.use_gradient_projection and len(y_mem) > 0:
             return self._train_step_gradient_projection(X_new, y_new, X_mem, y_mem)
         return self._train_step_baseline(X_new, y_new, X_mem, y_mem)
@@ -217,6 +252,90 @@ class ContinualTrainer:
                 conflict=conflict,
                 dot_before=dot_before.item(),
                 dot_after=dot_after,
+                mem_loss_before=mem_loss_before,
+                mem_loss_after=mem_loss_after,
+            )
+
+        return new_loss.item()
+
+    def _train_step_ocar(self, X_new: np.ndarray, y_new: np.ndarray,
+                          X_mem: np.ndarray, y_mem: np.ndarray):
+        """OCAR (Online Curvature-Aware Replay), `ocar.py`. Mirrors
+        `_train_step_gradient_projection`'s separate-gradient structure
+        (memory and new-subject gradients computed independently, at the
+        same parameters theta_hat_k), but the combination step rescales
+        the summed gradient with a running K-FAC curvature estimate
+        instead of (or, if `use_gradient_projection` is also on, after)
+        GP's orthogonal conflict-projection."""
+        self.model.train()
+        named_params = list(self.model.named_parameters())
+        param_names = [n for n, _ in named_params]
+        params = [p for _, p in named_params]
+
+        xb_mem = torch.from_numpy(X_mem).to(self.device)
+        yb_mem = torch.from_numpy(y_mem).to(self.device)
+        xb_new = torch.from_numpy(X_new).to(self.device)
+        yb_new = torch.from_numpy(y_new).to(self.device)
+
+        # ---- MEMORY GRADIENT (its forward/backward pass also feeds the
+        # K-FAC hooks, folded into the curvature estimate below) ----
+        logits_mem = self.model(xb_mem)
+        mem_loss_for_grad = self.criterion(logits_mem, yb_mem)
+        g_mem = torch.autograd.grad(mem_loss_for_grad, params, retain_graph=False, allow_unused=True)
+        self.ocar_preconditioner.observe_pass(param_names, g_mem)
+        g_mem_flat = flatten_grads(g_mem, params)
+
+        # ---- NEW-SUBJECT GRADIENT (same treatment) ----
+        logits_new = self.model(xb_new)
+        new_loss = self.criterion(logits_new, yb_new)
+        g_new = torch.autograd.grad(new_loss, params, retain_graph=False, allow_unused=True)
+        self.ocar_preconditioner.observe_pass(param_names, g_new)
+        g_new_flat = flatten_grads(g_new, params)
+
+        # ---- COMBINE: plain sum, or GP's conflict-projection if the
+        # "MUDVI+OCAR+GP" ablation condition is active ----
+        if self.use_gradient_projection:
+            dot_before = torch.dot(g_mem_flat, g_new_flat)
+            conflict = bool((dot_before < 0).item())
+            g_combined_flat = (
+                project_conflicting_gradients(g_mem_flat, g_new_flat) if conflict
+                else g_mem_flat + g_new_flat
+            )
+        else:
+            g_combined_flat = g_mem_flat + g_new_flat
+
+        # ---- CURVATURE PRECONDITIONING (OCAR proper) ----
+        g_tilde_flat = self.ocar_preconditioner.precondition(param_names, params, g_combined_flat)
+
+        cosine_sim = None
+        condition_number = None
+        if self.ocar_stats is not None:
+            cosine_sim = torch.nn.functional.cosine_similarity(
+                g_combined_flat, g_tilde_flat, dim=0).item()
+            condition_number = self.ocar_preconditioner.avg_condition_number()
+
+        # Diagnostic-only memory-loss measurement, same apples-to-apples
+        # eval()-mode convention as `_train_step_gradient_projection`.
+        mem_loss_before = None
+        if self.ocar_stats is not None:
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_before = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+
+        # ---- PARAMETER UPDATE ----
+        self.optimizer.zero_grad(set_to_none=True)
+        assign_flat_grad(g_tilde_flat, params)
+        self.optimizer.step()
+
+        if self.ocar_stats is not None:
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_after = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+            self.ocar_stats.log_step(
+                cosine_sim=cosine_sim,
+                condition_number=condition_number,
                 mem_loss_before=mem_loss_before,
                 mem_loss_after=mem_loss_after,
             )
@@ -361,6 +480,7 @@ class ContinualTrainer:
             "acc_matrix": {k: dict(v) for k, v in self.acc_matrix.items()},
             "use_gradient_projection": self.use_gradient_projection,
             "relationship_shift_detection": self.relationship_shift_detection,
+            "use_ocar": self.use_ocar,
         }
         if torch.cuda.is_available():
             state["torch_cuda_rng"] = torch.cuda.get_rng_state_all()
@@ -369,6 +489,10 @@ class ContinualTrainer:
         if self.confidence_detector is not None:
             state["confidence_detector"] = self.confidence_detector.state_dict()
             state["shift_log"] = list(self.shift_log)
+        if self.ocar_preconditioner is not None:
+            state["ocar_preconditioner"] = self.ocar_preconditioner.state_dict()
+        if self.ocar_stats is not None:
+            state["ocar_stats"] = dataclasses.asdict(self.ocar_stats)
         return state
 
     def load_state_dict(self, state: dict) -> None:
@@ -379,6 +503,10 @@ class ContinualTrainer:
         assert state["relationship_shift_detection"] == self.relationship_shift_detection, (
             "Checkpoint was saved with a different relationship_shift_detection "
             "setting than this trainer was constructed with."
+        )
+        assert state.get("use_ocar", False) == self.use_ocar, (
+            "Checkpoint was saved with a different use_ocar setting than "
+            "this trainer was constructed with."
         )
         self.model.load_state_dict(state["model"])
         self.optimizer.load_state_dict(state["optimizer"])
@@ -408,3 +536,7 @@ class ContinualTrainer:
                 )
             self.confidence_detector.load_state_dict(state["confidence_detector"])
             self.shift_log = list(state.get("shift_log", []))
+        if "ocar_preconditioner" in state and self.ocar_preconditioner is not None:
+            self.ocar_preconditioner.load_state_dict(state["ocar_preconditioner"])
+        if "ocar_stats" in state and self.ocar_stats is not None:
+            self.ocar_stats = OCARStats(**state["ocar_stats"])

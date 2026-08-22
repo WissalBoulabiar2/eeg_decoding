@@ -2,8 +2,8 @@
 
 Replaces manually editing source / juggling `run_baseline.py` vs.
 `run_comparison.py` with one CLI surface covering every method this
-project defines: mudvi (+GP/+RSD), er, mir, gmed -- see
-`config.IMPLEMENTED_METHODS`.
+project defines: mudvi (+GP/+RSD/+OCAR, any combination), er, mir, gmed
+-- see `config.IMPLEMENTED_METHODS`.
 
 Usage:
   python -m mudvi_baseline.run_experiment --method mudvi \\
@@ -65,6 +65,9 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             confidence_signal_type=cfg.confidence_signal_type,
             confidence_window_size=cfg.confidence_window_size,
             confidence_min_segment_length=cfg.confidence_min_segment_length,
+            use_ocar=cfg.ocar,
+            ocar_ema_decay=cfg.ocar_ema_decay,
+            ocar_damping=cfg.ocar_damping,
         )
     if cfg.method == "er":
         memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
@@ -116,7 +119,7 @@ def run(cfg: ExperimentConfig) -> dict:
 
     print(f"[run_experiment] method={cfg.method} subjects={cfg.subjects} "
           f"gp={cfg.gradient_projection} rsd={cfg.relationship_shift_detection} "
-          f"seed={cfg.seed} device={device}")
+          f"ocar={cfg.ocar} seed={cfg.seed} device={device}")
     print(f"[run_experiment] run_dir={run_dir}")
 
     print(f"[run_experiment] Loading and segmenting subjects: {cfg.subjects}")
@@ -181,6 +184,7 @@ def run(cfg: ExperimentConfig) -> dict:
         "memory_class_counts": trainer.memory.class_counts(),
         "gradient_projection": cfg.gradient_projection,
         "relationship_shift_detection": cfg.relationship_shift_detection,
+        "ocar": cfg.ocar,
         "elapsed_seconds": elapsed,
     }
     if trainer.gp_stats is not None:
@@ -188,6 +192,12 @@ def run(cfg: ExperimentConfig) -> dict:
         metrics["gradient_projection_stats"] = gp_summary
         print("\nGradient projection stats:")
         for k, v in gp_summary.items():
+            print(f"  {k}: {v}")
+    if trainer.ocar_stats is not None:
+        ocar_summary = trainer.ocar_stats.summary()
+        metrics["ocar_stats"] = ocar_summary
+        print("\nOCAR stats:")
+        for k, v in ocar_summary.items():
             print(f"  {k}: {v}")
     if cfg.relationship_shift_detection:
         log = trainer.shift_log
