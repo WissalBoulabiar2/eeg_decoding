@@ -81,7 +81,7 @@ from .gradient_projection import (
     GradientProjectionStats,
 )
 from .confidence_detector import ConfidenceShiftDetector, freeze_reference_model
-from .ocar import KFACPreconditioner, OCARStats
+from .ocar import OCARPreconditioner, OCARStats
 
 
 class ContinualTrainer:
@@ -95,8 +95,9 @@ class ContinualTrainer:
                  confidence_window_size: int = 40,
                  confidence_min_segment_length: int = 5,
                  use_ocar: bool = False,
-                 ocar_ema_decay: float = 0.95,
-                 ocar_damping: float = 1e-3):
+                 ocar_alpha_ema: float = 1.0,
+                 ocar_regul: float = 0.01,
+                 ocar_fim_update_every: int = 1):
         self.model = model.to(device)
         self.memory = memory
         self.device = device
@@ -111,10 +112,12 @@ class ContinualTrainer:
         self.gp_stats = GradientProjectionStats() if use_gradient_projection else None
 
         # OCAR (Online Curvature-Aware Replay) -- see module docstring
-        # above and `ocar.py` for the full mechanism/scope.
+        # above and `ocar.py` for the full mechanism/scope, verified
+        # against the official repo (github.com/edo-urettini/CL_stability).
         self.use_ocar = use_ocar
         self.ocar_preconditioner = (
-            KFACPreconditioner(self.model, device, ema_decay=ocar_ema_decay, damping=ocar_damping)
+            OCARPreconditioner(self.model, device, lr=lr, alpha_ema=ocar_alpha_ema,
+                                regul=ocar_regul, fim_update_every=ocar_fim_update_every)
             if use_ocar else None
         )
         self.ocar_stats = OCARStats() if use_ocar else None
@@ -260,14 +263,96 @@ class ContinualTrainer:
 
     def _train_step_ocar(self, X_new: np.ndarray, y_new: np.ndarray,
                           X_mem: np.ndarray, y_mem: np.ndarray):
-        """OCAR (Online Curvature-Aware Replay), `ocar.py`. Mirrors
-        `_train_step_gradient_projection`'s separate-gradient structure
-        (memory and new-subject gradients computed independently, at the
-        same parameters theta_hat_k), but the combination step rescales
-        the summed gradient with a running K-FAC curvature estimate
-        instead of (or, if `use_gradient_projection` is also on, after)
-        GP's orthogonal conflict-projection."""
+        """OCAR (Online Curvature-Aware Replay), `ocar.py`. When
+        `use_gradient_projection` is OFF (the common case), this matches
+        the VERIFIED structure of the official algorithm exactly: one
+        combined (new + replay) batch, one standard forward/backward
+        pass, then `.grad` is rescaled in place by the running K-FAC
+        curvature estimate before `optimizer.step()` -- see
+        `ocar.py`'s module docstring for the full citation and the two
+        disclosed deviations (BatchNorm2d/grouped-conv excluded from
+        preconditioning; no class-frequency loss reweighting, since that
+        mechanism has no analog in this project's fixed-4-class
+        domain-incremental setting).
+
+        When `use_gradient_projection` is ALSO on (the "MUDVI+OCAR+GP"
+        ablation condition), this falls back to computing the
+        new-subject and memory gradients SEPARATELY (mirroring
+        `_train_step_gradient_projection`'s structure) so GP's
+        conflict-projection can run first, THEN applies OCAR's
+        curvature preconditioning to the projected result. This
+        combined mode is this project's OWN EXTENSION for the ablation
+        study -- it is NOT part of the published OCAR algorithm, which
+        has no gradient-projection step at all."""
         self.model.train()
+
+        if not self.use_gradient_projection:
+            return self._train_step_ocar_official(X_new, y_new, X_mem, y_mem)
+        return self._train_step_ocar_gp_combo(X_new, y_new, X_mem, y_mem)
+
+    def _train_step_ocar_official(self, X_new: np.ndarray, y_new: np.ndarray,
+                                   X_mem: np.ndarray, y_mem: np.ndarray):
+        X = np.concatenate([X_new, X_mem], axis=0)
+        y = np.concatenate([y_new, y_mem], axis=0)
+        perm = self.rng.permutation(len(y))
+        xb = torch.from_numpy(X[perm]).to(self.device)
+        yb = torch.from_numpy(y[perm]).to(self.device)
+
+        self.optimizer.zero_grad(set_to_none=True)
+        logits = self.model(xb)
+        loss = self.criterion(logits, yb)
+        loss.backward()
+
+        # ---- CURVATURE UPDATE (this batch's hook-captured activations
+        # / output-gradients feed the running K-FAC estimate) ----
+        self.ocar_preconditioner.maybe_update_fisher()
+
+        raw_grad_flat = None
+        if self.ocar_stats is not None:
+            raw_grad_flat = torch.cat([
+                p.grad.detach().reshape(-1) for p in self.model.parameters() if p.grad is not None
+            ])
+
+        # Diagnostic-only memory-loss measurement, apples-to-apples
+        # eval()-mode convention, same as GP's.
+        mem_loss_before = None
+        xb_mem = yb_mem = None
+        if self.ocar_stats is not None:
+            xb_mem = torch.from_numpy(X_mem).to(self.device)
+            yb_mem = torch.from_numpy(y_mem).to(self.device)
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_before = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+
+        # ---- PRECONDITION .grad IN PLACE, THEN STEP ----
+        self.ocar_preconditioner.precondition_grad_(self.model)
+        self.optimizer.step()
+
+        if self.ocar_stats is not None:
+            precond_grad_flat = torch.cat([
+                p.grad.detach().reshape(-1) for p in self.model.parameters() if p.grad is not None
+            ])
+            cosine_sim = torch.nn.functional.cosine_similarity(
+                raw_grad_flat, precond_grad_flat, dim=0).item()
+            condition_number = self.ocar_preconditioner.avg_condition_number()
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_after = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+            self.ocar_stats.log_step(
+                cosine_sim=cosine_sim,
+                condition_number=condition_number,
+                mem_loss_before=mem_loss_before,
+                mem_loss_after=mem_loss_after,
+            )
+
+        return loss.item()
+
+    def _train_step_ocar_gp_combo(self, X_new: np.ndarray, y_new: np.ndarray,
+                                   X_mem: np.ndarray, y_mem: np.ndarray):
+        """MUDVI+OCAR+GP ablation extension (not part of the published
+        OCAR algorithm) -- see `_train_step_ocar`'s docstring."""
         named_params = list(self.model.named_parameters())
         param_names = [n for n, _ in named_params]
         params = [p for _, p in named_params]
@@ -277,35 +362,30 @@ class ContinualTrainer:
         xb_new = torch.from_numpy(X_new).to(self.device)
         yb_new = torch.from_numpy(y_new).to(self.device)
 
-        # ---- MEMORY GRADIENT (its forward/backward pass also feeds the
-        # K-FAC hooks, folded into the curvature estimate below) ----
         logits_mem = self.model(xb_mem)
         mem_loss_for_grad = self.criterion(logits_mem, yb_mem)
         g_mem = torch.autograd.grad(mem_loss_for_grad, params, retain_graph=False, allow_unused=True)
-        self.ocar_preconditioner.observe_pass(param_names, g_mem)
         g_mem_flat = flatten_grads(g_mem, params)
 
-        # ---- NEW-SUBJECT GRADIENT (same treatment) ----
         logits_new = self.model(xb_new)
         new_loss = self.criterion(logits_new, yb_new)
         g_new = torch.autograd.grad(new_loss, params, retain_graph=False, allow_unused=True)
-        self.ocar_preconditioner.observe_pass(param_names, g_new)
         g_new_flat = flatten_grads(g_new, params)
 
-        # ---- COMBINE: plain sum, or GP's conflict-projection if the
-        # "MUDVI+OCAR+GP" ablation condition is active ----
-        if self.use_gradient_projection:
-            dot_before = torch.dot(g_mem_flat, g_new_flat)
-            conflict = bool((dot_before < 0).item())
-            g_combined_flat = (
-                project_conflicting_gradients(g_mem_flat, g_new_flat) if conflict
-                else g_mem_flat + g_new_flat
-            )
-        else:
-            g_combined_flat = g_mem_flat + g_new_flat
+        # This step's hook-captured activations/output-gradients are from
+        # the LAST forward/backward pass above (the new-subject one) --
+        # disclosed simplification for this extension-only combo path;
+        # the official (non-GP) path above uses the true combined batch.
+        self.ocar_preconditioner.maybe_update_fisher()
 
-        # ---- CURVATURE PRECONDITIONING (OCAR proper) ----
-        g_tilde_flat = self.ocar_preconditioner.precondition(param_names, params, g_combined_flat)
+        dot_before = torch.dot(g_mem_flat, g_new_flat)
+        conflict = bool((dot_before < 0).item())
+        g_combined_flat = (
+            project_conflicting_gradients(g_mem_flat, g_new_flat) if conflict
+            else g_mem_flat + g_new_flat
+        )
+
+        g_tilde_flat = self.ocar_preconditioner.precondition_flat(param_names, params, g_combined_flat)
 
         cosine_sim = None
         condition_number = None
@@ -314,8 +394,6 @@ class ContinualTrainer:
                 g_combined_flat, g_tilde_flat, dim=0).item()
             condition_number = self.ocar_preconditioner.avg_condition_number()
 
-        # Diagnostic-only memory-loss measurement, same apples-to-apples
-        # eval()-mode convention as `_train_step_gradient_projection`.
         mem_loss_before = None
         if self.ocar_stats is not None:
             self.model.eval()
@@ -323,7 +401,6 @@ class ContinualTrainer:
                 mem_loss_before = self.criterion(self.model(xb_mem), yb_mem).item()
             self.model.train()
 
-        # ---- PARAMETER UPDATE ----
         self.optimizer.zero_grad(set_to_none=True)
         assign_flat_grad(g_tilde_flat, params)
         self.optimizer.step()

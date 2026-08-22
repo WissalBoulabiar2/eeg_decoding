@@ -55,14 +55,21 @@ class ExperimentConfig:
     confidence_min_segment_length: int = 5
 
     # MUDVI-only extension: OCAR (Online Curvature-Aware Replay, Urettini
-    # & Carta, ICML 2025 -- see ocar.py). Same "MUDVI-specific, not
-    # hybridized into er/mir/gmed" convention as gradient_projection/
+    # & Carta, ICML 2025 -- see ocar.py, verified against the official
+    # repo github.com/edo-urettini/CL_stability). Same "MUDVI-specific,
+    # not hybridized into er/mir/gmed" convention as gradient_projection/
     # relationship_shift_detection above. Can be combined with
-    # gradient_projection (the "MUDVI+OCAR+GP" ablation condition,
-    # see trainer.ContinualTrainer._train_step_ocar).
+    # gradient_projection (the "MUDVI+OCAR+GP" ablation condition, an
+    # extension beyond the published algorithm -- see
+    # trainer.ContinualTrainer._train_step_ocar). Defaults match the
+    # official repo's published "robust_grad" config exactly
+    # (alpha_ema=1.0, regul=0.01); ocar_fim_update_every=1 is this
+    # project's disclosed adaptation of their train_epochs-based gating
+    # (see ocar.py's OCARPreconditioner.maybe_update_fisher docstring).
     ocar: bool = False
-    ocar_ema_decay: float = 0.95
-    ocar_damping: float = 1e-3
+    ocar_alpha_ema: float = 1.0
+    ocar_regul: float = 0.01
+    ocar_fim_update_every: int = 1
 
     # GMED-only extension (gmed_baseline.GMEDTrainer). Ignored for every
     # other method, same convention as the MUDVI-only fields above.
@@ -143,11 +150,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "ICML 2025) -- K-FAC curvature-preconditioned replay update, see "
                               "ocar.py. Ignored for --method er/mir/gmed. May be combined with "
                               "--gradient_projection (the MUDVI+OCAR+GP ablation condition).")
-    parser.add_argument("--ocar_ema_decay", type=float, default=0.95,
-                         help="EMA decay for the running K-FAC/diagonal curvature estimate.")
-    parser.add_argument("--ocar_damping", type=float, default=1e-3,
-                         help="Tikhonov damping added before inverting the K-FAC factors "
-                              "(and added to the diagonal-fallback denominator).")
+    parser.add_argument("--ocar_alpha_ema", type=float, default=1.0,
+                         help="Weight on the NEWLY computed Fisher estimate when blending with "
+                              "the previous one (1.0 = no blending, matches the official repo's "
+                              "published default; lower values enable EMA blending for ablation).")
+    parser.add_argument("--ocar_regul", type=float, default=0.01,
+                         help="Amount the K-FAC damping term tau grows by every Fisher-recompute "
+                              "cycle (matches the official repo's published default).")
+    parser.add_argument("--ocar_fim_update_every", type=int, default=1,
+                         help="Recompute the K-FAC curvature estimate every N training steps "
+                              "(default 1 = every step; see ocar.py's docstring for why the "
+                              "official repo's literal train_epochs-based gating does not "
+                              "transfer directly to this project's epochs_per_subject).")
 
     parser.add_argument("--gmed_edit_lr", type=float, default=0.1,
                          help="GMED only (gradient-ascent input-space edit step size). "
@@ -197,8 +211,9 @@ def parse_config(argv=None) -> ExperimentConfig:
         confidence_window_size=args.confidence_window_size,
         confidence_min_segment_length=args.confidence_min_segment_length,
         ocar=args.ocar,
-        ocar_ema_decay=args.ocar_ema_decay,
-        ocar_damping=args.ocar_damping,
+        ocar_alpha_ema=args.ocar_alpha_ema,
+        ocar_regul=args.ocar_regul,
+        ocar_fim_update_every=args.ocar_fim_update_every,
         gmed_edit_lr=args.gmed_edit_lr,
         out_dir=args.out_dir,
         run_name=args.run_name,

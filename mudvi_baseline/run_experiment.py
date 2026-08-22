@@ -66,8 +66,9 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             confidence_window_size=cfg.confidence_window_size,
             confidence_min_segment_length=cfg.confidence_min_segment_length,
             use_ocar=cfg.ocar,
-            ocar_ema_decay=cfg.ocar_ema_decay,
-            ocar_damping=cfg.ocar_damping,
+            ocar_alpha_ema=cfg.ocar_alpha_ema,
+            ocar_regul=cfg.ocar_regul,
+            ocar_fim_update_every=cfg.ocar_fim_update_every,
         )
     if cfg.method == "er":
         memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
