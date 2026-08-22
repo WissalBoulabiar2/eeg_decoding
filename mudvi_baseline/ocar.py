@@ -144,19 +144,26 @@ class _KFACLayer:
             self.G = (1 - alpha_ema) * self.G + alpha_ema * g_batch.detach()
 
     def precondition(self, grad_weight: torch.Tensor, grad_bias, tau: float):
-        """grad_weight: (out_dim, in_dim). grad_bias: (out_dim,) or None
-        (must match `self.has_bias`). Returns (g_tilde_weight, g_tilde_bias)."""
+        """grad_weight: any shape whose total size is out_dim*in_dim
+        (e.g. a Conv2d weight's native (out_ch, in_ch, kh, kw) -- flattens
+        to (out_dim, in_dim) in the SAME (Cin, kh, kw) row-major order the
+        A factor's patches were built in via `_unfold_conv_input`, so this
+        reshape is consistent with the Kronecker factors, not arbitrary).
+        grad_bias: (out_dim,) or None (must match `self.has_bias`).
+        Returns (g_tilde_weight, g_tilde_bias), reshaped back to the
+        ORIGINAL grad_weight/grad_bias shapes."""
+        g_w = grad_weight.reshape(self.out_dim, self.in_dim)
         if self.has_bias:
-            g = torch.cat([grad_weight, grad_bias.reshape(-1, 1)], dim=1)
+            g = torch.cat([g_w, grad_bias.reshape(-1, 1)], dim=1)
         else:
-            g = grad_weight
+            g = g_w
         eye_a = torch.eye(self.A.shape[0], device=self.A.device)
         eye_g = torch.eye(self.G.shape[0], device=self.G.device)
         a_inv = torch.linalg.inv(self.A + tau * eye_a)
         g_inv = torch.linalg.inv(self.G + tau * eye_g)
         g_tilde = g_inv @ g @ a_inv
         if self.has_bias:
-            return g_tilde[:, :-1].reshape_as(grad_weight), g_tilde[:, -1].reshape_as(grad_bias)
+            return g_tilde[:, :-1].reshape(grad_weight.shape), g_tilde[:, -1].reshape_as(grad_bias)
         return g_tilde.reshape_as(grad_weight), None
 
     def condition_number(self, tau: float) -> float:
