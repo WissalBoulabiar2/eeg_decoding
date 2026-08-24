@@ -71,6 +71,23 @@ class ExperimentConfig:
     ocar_regul: float = 0.01
     ocar_fim_update_every: int = 1
 
+    # MUDVI-only extension: OCAR++ (Conflict-Aware Fisher Preconditioning,
+    # ocarpp.py). This project's OWN extension of OCAR -- not part of the
+    # published paper/repo. Reuses OCAR's K-FAC/Fisher machinery (same
+    # ocar_alpha_ema/ocar_regul/ocar_fim_update_every hyperparameters
+    # above) but adds a slow parameter-consolidation anchor and a
+    # directional-conflict-aware protection factor; see ocarpp.py's
+    # module docstring for the full mechanism. Mutually exclusive with
+    # `ocar` (they are two separate methods: method="ocar" vs.
+    # method="ocar++", selected by which flag is set) and with
+    # `gradient_projection` (no such ablation is defined for OCAR++);
+    # both are enforced in parse_config below and again in
+    # ContinualTrainer.__init__.
+    ocar_plusplus: bool = False
+    ocarpp_beta_anchor: float = 0.999
+    ocarpp_gamma: float = 1.0
+    ocarpp_eps: float = 1e-8
+
     # GMED-only extension (gmed_baseline.GMEDTrainer). Ignored for every
     # other method, same convention as the MUDVI-only fields above.
     gmed_edit_lr: float = 0.1
@@ -83,17 +100,21 @@ class ExperimentConfig:
 
     def result_subdir(self) -> str:
         """Maps (method, gradient_projection, relationship_shift_detection,
-        ocar) to the results/ layout requested for the Lightning
-        migration: results/{baseline,er,mir,gmed,mudvi_gp,mudvi_rsd,
-        mudvi_gp_rsd,mudvi_ocar,mudvi_ocar_gp}/. `ocar` combined with
-        `relationship_shift_detection` (RSD stays diagnostic-only, see
-        trainer.py, so this combination changes no accuracy result but is
-        still given its own subfolder for run-isolation)."""
+        ocar, ocar_plusplus) to the results/ layout requested for the
+        Lightning migration: results/{baseline,er,mir,gmed,mudvi_gp,
+        mudvi_rsd,mudvi_gp_rsd,mudvi_ocar,mudvi_ocar_gp,mudvi_ocarpp}/.
+        `ocar` combined with `relationship_shift_detection` (RSD stays
+        diagnostic-only, see trainer.py, so this combination changes no
+        accuracy result but is still given its own subfolder for
+        run-isolation). `ocar` and `ocar_plusplus` are mutually
+        exclusive (enforced in parse_config/ContinualTrainer)."""
         if self.method != "mudvi":
             return self.method  # results/er/, results/mir/, results/gmed/
         parts = ["mudvi"]
         if self.ocar:
             parts.append("ocar")
+        if self.ocar_plusplus:
+            parts.append("ocarpp")
         if self.gradient_projection:
             parts.append("gp")
         if self.relationship_shift_detection:
@@ -163,6 +184,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "official repo's literal train_epochs-based gating does not "
                               "transfer directly to this project's epochs_per_subject).")
 
+    parser.add_argument("--ocar_plusplus", action="store_true",
+                         help="MUDVI only. OCAR++ (Conflict-Aware Fisher Preconditioning), this "
+                              "project's own extension of OCAR -- see ocarpp.py. Mutually "
+                              "exclusive with --ocar (separate methods) and with "
+                              "--gradient_projection. Ignored for --method er/mir/gmed.")
+    parser.add_argument("--ocarpp_beta_anchor", type=float, default=0.999,
+                         help="EMA momentum beta_a for OCAR++'s slow consolidation anchor "
+                              "theta*_t (higher = slower-moving anchor).")
+    parser.add_argument("--ocarpp_gamma", type=float, default=1.0,
+                         help="OCAR++ protection strength gamma in kappa_i = 1 + gamma * I_i * C_i.")
+    parser.add_argument("--ocarpp_eps", type=float, default=1e-8,
+                         help="OCAR++ numerical-stability epsilon used in both the directional "
+                              "conflict c_i and the Fisher importance I_i.")
+
     parser.add_argument("--gmed_edit_lr", type=float, default=0.1,
                          help="GMED only (gradient-ascent input-space edit step size). "
                               "Ignored for --method mudvi/er/mir.")
@@ -188,11 +223,23 @@ def parse_config(argv=None) -> ExperimentConfig:
         )
     if args.method in ("er", "mir", "gmed") and (
         args.gradient_projection or args.relationship_shift_detection or args.ocar
+        or args.ocar_plusplus
     ):
         raise SystemExit(
-            f"--gradient_projection/--relationship_shift_detection/--ocar are MUDVI-only "
-            f"extensions and are not defined for --method {args.method}. "
+            f"--gradient_projection/--relationship_shift_detection/--ocar/--ocar_plusplus are "
+            f"MUDVI-only extensions and are not defined for --method {args.method}. "
             f"Remove them or switch to --method mudvi."
+        )
+    if args.ocar and args.ocar_plusplus:
+        raise SystemExit(
+            "--ocar and --ocar_plusplus are two separate methods (OCAR original vs. "
+            "OCAR++) and cannot both be set. Choose one."
+        )
+    if args.ocar_plusplus and args.gradient_projection:
+        raise SystemExit(
+            "--ocar_plusplus does not support --gradient_projection (no such ablation "
+            "is defined for OCAR++; OCAR original supports --ocar --gradient_projection "
+            "instead)."
         )
     return ExperimentConfig(
         method=args.method,
@@ -214,6 +261,10 @@ def parse_config(argv=None) -> ExperimentConfig:
         ocar_alpha_ema=args.ocar_alpha_ema,
         ocar_regul=args.ocar_regul,
         ocar_fim_update_every=args.ocar_fim_update_every,
+        ocar_plusplus=args.ocar_plusplus,
+        ocarpp_beta_anchor=args.ocarpp_beta_anchor,
+        ocarpp_gamma=args.ocarpp_gamma,
+        ocarpp_eps=args.ocarpp_eps,
         gmed_edit_lr=args.gmed_edit_lr,
         out_dir=args.out_dir,
         run_name=args.run_name,

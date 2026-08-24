@@ -69,6 +69,10 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             ocar_alpha_ema=cfg.ocar_alpha_ema,
             ocar_regul=cfg.ocar_regul,
             ocar_fim_update_every=cfg.ocar_fim_update_every,
+            use_ocarpp=cfg.ocar_plusplus,
+            ocarpp_beta_anchor=cfg.ocarpp_beta_anchor,
+            ocarpp_gamma=cfg.ocarpp_gamma,
+            ocarpp_eps=cfg.ocarpp_eps,
         )
     if cfg.method == "er":
         memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
@@ -120,7 +124,7 @@ def run(cfg: ExperimentConfig) -> dict:
 
     print(f"[run_experiment] method={cfg.method} subjects={cfg.subjects} "
           f"gp={cfg.gradient_projection} rsd={cfg.relationship_shift_detection} "
-          f"ocar={cfg.ocar} seed={cfg.seed} device={device}")
+          f"ocar={cfg.ocar} ocar_plusplus={cfg.ocar_plusplus} seed={cfg.seed} device={device}")
     print(f"[run_experiment] run_dir={run_dir}")
 
     print(f"[run_experiment] Loading and segmenting subjects: {cfg.subjects}")
@@ -186,6 +190,7 @@ def run(cfg: ExperimentConfig) -> dict:
         "gradient_projection": cfg.gradient_projection,
         "relationship_shift_detection": cfg.relationship_shift_detection,
         "ocar": cfg.ocar,
+        "ocar_plusplus": cfg.ocar_plusplus,
         "elapsed_seconds": elapsed,
     }
     if trainer.gp_stats is not None:
@@ -199,6 +204,12 @@ def run(cfg: ExperimentConfig) -> dict:
         metrics["ocar_stats"] = ocar_summary
         print("\nOCAR stats:")
         for k, v in ocar_summary.items():
+            print(f"  {k}: {v}")
+    if trainer.ocarpp_stats is not None:
+        ocarpp_summary = trainer.ocarpp_stats.summary()
+        metrics["ocarpp_stats"] = ocarpp_summary
+        print("\nOCAR++ stats:")
+        for k, v in ocarpp_summary.items():
             print(f"  {k}: {v}")
     if cfg.relationship_shift_detection:
         log = trainer.shift_log

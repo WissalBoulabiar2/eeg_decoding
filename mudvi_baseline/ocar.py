@@ -327,6 +327,24 @@ class OCARPreconditioner:
                 parts[bias_name] = g_tilde_b
         return torch.cat([parts[name].reshape(-1) for name in named_params])
 
+    @property
+    def layer_names(self) -> list[str]:
+        """Read-only accessor: the K-FAC'd parameter names this
+        preconditioner tracks (`temporal_conv.0.weight`,
+        `pointwise_conv.0.weight`, `classifier.weight`). Added so
+        `ocarpp.py` can reuse this class's Fisher/K-FAC state (hooks,
+        running A/G factors, EMA update) by composition instead of
+        duplicating it -- purely additive, does not change OCAR's own
+        algorithm or state."""
+        return list(self._layers.keys())
+
+    def get_factors(self, name: str):
+        """Read-only accessor: (A, G, has_bias, initialized) for one
+        tracked layer's current running K-FAC factors. See `layer_names`
+        docstring for why this exists."""
+        layer = self._layers[name]
+        return layer.A, layer.G, layer.has_bias, layer.initialized
+
     def avg_condition_number(self) -> float:
         vals = [l.condition_number(self.tau) for l in self._layers.values() if l.initialized]
         return sum(vals) / len(vals) if vals else float("nan")

@@ -62,6 +62,20 @@ Extension points:
     two separate steps) -- this is the "MUDVI+OCAR+GP" ablation
     condition. When False (default), none of this runs and
     `_train_step` is unchanged.
+  - `use_ocarpp`: OCAR++ (Conflict-Aware Fisher Preconditioning) -- see
+    `ocarpp.py`'s module docstring. This project's own extension of
+    OCAR, NOT part of the published paper/repo. When True (and the
+    memory buffer is non-empty), `_train_step` dispatches to
+    `_train_step_ocarpp`, a separate code path that reuses OCAR's own
+    K-FAC/Fisher estimate (via `OCARPreconditioner`, by composition) but
+    rescales the gradient using each direction's conflict with a slowly-
+    consolidated parameter anchor rather than OCAR's flat Fisher-inverse
+    rescaling. Mutually exclusive with `use_ocar` (asserted in
+    `__init__`: they are two separate methods, `method="ocar"` vs.
+    `method="ocar++"`) and with `use_gradient_projection` (no such
+    ablation is defined for OCAR++). `use_ocar=False, use_ocarpp=False`
+    (the default) leaves `_train_step` exactly as it was before OCAR++
+    existed.
 """
 from __future__ import annotations
 
@@ -82,6 +96,7 @@ from .gradient_projection import (
 )
 from .confidence_detector import ConfidenceShiftDetector, freeze_reference_model
 from .ocar import OCARPreconditioner, OCARStats
+from .ocarpp import OCARPlusPlusPreconditioner, OCARPlusPlusStats
 
 
 class ContinualTrainer:
@@ -97,7 +112,15 @@ class ContinualTrainer:
                  use_ocar: bool = False,
                  ocar_alpha_ema: float = 1.0,
                  ocar_regul: float = 0.01,
-                 ocar_fim_update_every: int = 1):
+                 ocar_fim_update_every: int = 1,
+                 use_ocarpp: bool = False,
+                 ocarpp_beta_anchor: float = 0.999,
+                 ocarpp_gamma: float = 1.0,
+                 ocarpp_eps: float = 1e-8):
+        assert not (use_ocar and use_ocarpp), (
+            "use_ocar and use_ocarpp are two separate methods (OCAR original "
+            "vs. OCAR++) and cannot both be enabled on the same trainer."
+        )
         self.model = model.to(device)
         self.memory = memory
         self.device = device
@@ -122,6 +145,27 @@ class ContinualTrainer:
         )
         self.ocar_stats = OCARStats() if use_ocar else None
 
+        # OCAR++ (Conflict-Aware Fisher Preconditioning) -- this project's
+        # own extension, NOT part of the published OCAR paper/repo. See
+        # `ocarpp.py`'s module docstring for the full mechanism. Mutually
+        # exclusive with `use_ocar` (asserted above): `method="ocar"` and
+        # `method="ocar++"` are two separate, clearly-separated code paths
+        # that both happen to reuse `OCARPreconditioner`'s K-FAC machinery.
+        assert not (use_ocarpp and use_gradient_projection), (
+            "OCAR++ does not support combination with use_gradient_projection "
+            "(no such ablation is specified for OCAR++); use OCAR original's "
+            "--ocar --gradient_projection combo for that ablation instead."
+        )
+        self.use_ocarpp = use_ocarpp
+        self.ocarpp_preconditioner = (
+            OCARPlusPlusPreconditioner(self.model, device, lr=lr, alpha_ema=ocar_alpha_ema,
+                                        regul=ocar_regul, fim_update_every=ocar_fim_update_every,
+                                        beta_anchor=ocarpp_beta_anchor, gamma=ocarpp_gamma,
+                                        eps=ocarpp_eps)
+            if use_ocarpp else None
+        )
+        self.ocarpp_stats = OCARPlusPlusStats() if use_ocarpp else None
+
         # Addition 2 (Confidence-Based Relationship-Shift Detection).
         self.relationship_shift_detection = relationship_shift_detection
         self.confidence_signal_type = confidence_signal_type
@@ -144,6 +188,8 @@ class ContinualTrainer:
         # condition), so there is no separate GP-only branch to reach.
         if self.use_ocar and len(y_mem) > 0:
             return self._train_step_ocar(X_new, y_new, X_mem, y_mem)
+        if self.use_ocarpp and len(y_mem) > 0:
+            return self._train_step_ocarpp(X_new, y_new, X_mem, y_mem)
         if self.use_gradient_projection and len(y_mem) > 0:
             return self._train_step_gradient_projection(X_new, y_new, X_mem, y_mem)
         return self._train_step_baseline(X_new, y_new, X_mem, y_mem)
@@ -419,6 +465,82 @@ class ContinualTrainer:
 
         return new_loss.item()
 
+    def _train_step_ocarpp(self, X_new: np.ndarray, y_new: np.ndarray,
+                            X_mem: np.ndarray, y_mem: np.ndarray):
+        """OCAR++ (Conflict-Aware Fisher Preconditioning, `ocarpp.py`).
+        This project's own extension, NOT part of the published OCAR
+        algorithm -- see `ocarpp.py`'s module docstring for the full
+        mechanism. Structurally mirrors `_train_step_ocar_official`
+        (one combined new+replay batch, one standard backward pass,
+        curvature state updated from that pass, `.grad` rescaled in
+        place, then `optimizer.step()`), but the rescaling additionally
+        accounts for each direction's conflict with the drift from a
+        slowly-consolidated parameter anchor, and that anchor is
+        advanced with the post-update parameters once the step is
+        taken."""
+        X = np.concatenate([X_new, X_mem], axis=0)
+        y = np.concatenate([y_new, y_mem], axis=0)
+        perm = self.rng.permutation(len(y))
+        xb = torch.from_numpy(X[perm]).to(self.device)
+        yb = torch.from_numpy(y[perm]).to(self.device)
+
+        self.optimizer.zero_grad(set_to_none=True)
+        logits = self.model(xb)
+        loss = self.criterion(logits, yb)
+        loss.backward()
+
+        # ---- CURVATURE UPDATE (reuses OCAR's own K-FAC machinery,
+        # unchanged) + refresh OCAR++'s cached eigenbasis ----
+        self.ocarpp_preconditioner.maybe_update_fisher()
+
+        raw_grad_flat = None
+        if self.ocarpp_stats is not None:
+            raw_grad_flat = torch.cat([
+                p.grad.detach().reshape(-1) for p in self.model.parameters() if p.grad is not None
+            ])
+
+        mem_loss_before = None
+        xb_mem = yb_mem = None
+        if self.ocarpp_stats is not None:
+            xb_mem = torch.from_numpy(X_mem).to(self.device)
+            yb_mem = torch.from_numpy(y_mem).to(self.device)
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_before = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+
+        # ---- CONFLICT-AWARE PRECONDITION .grad IN PLACE, THEN STEP ----
+        self.ocarpp_preconditioner.precondition_grad_(self.model)
+        self.optimizer.step()
+
+        # ---- ADVANCE THE SLOW CONSOLIDATION ANCHOR (post-update
+        # parameters, matching theta*_{t+1} = beta_a theta*_t +
+        # (1-beta_a) theta_{t+1}) ----
+        self.ocarpp_preconditioner.update_anchors_(self.model)
+
+        if self.ocarpp_stats is not None:
+            precond_grad_flat = torch.cat([
+                p.grad.detach().reshape(-1) for p in self.model.parameters() if p.grad is not None
+            ])
+            cosine_sim = torch.nn.functional.cosine_similarity(
+                raw_grad_flat, precond_grad_flat, dim=0).item()
+            condition_number = self.ocarpp_preconditioner.avg_condition_number()
+            avg_conflict, avg_kappa = self.ocarpp_preconditioner.last_diagnostics()
+            self.model.eval()
+            with torch.no_grad():
+                mem_loss_after = self.criterion(self.model(xb_mem), yb_mem).item()
+            self.model.train()
+            self.ocarpp_stats.log_step(
+                cosine_sim=cosine_sim,
+                condition_number=condition_number,
+                avg_conflict=avg_conflict,
+                avg_kappa=avg_kappa,
+                mem_loss_before=mem_loss_before,
+                mem_loss_after=mem_loss_after,
+            )
+
+        return loss.item()
+
     def train_on_subject(self, subject_id: str, X_train: np.ndarray, y_train: np.ndarray):
         """Train on one subject's data + replay from memory (empty on the
         very first subject, matching 'train initial model' in the task)."""
@@ -558,6 +680,7 @@ class ContinualTrainer:
             "use_gradient_projection": self.use_gradient_projection,
             "relationship_shift_detection": self.relationship_shift_detection,
             "use_ocar": self.use_ocar,
+            "use_ocarpp": self.use_ocarpp,
         }
         if torch.cuda.is_available():
             state["torch_cuda_rng"] = torch.cuda.get_rng_state_all()
@@ -570,6 +693,10 @@ class ContinualTrainer:
             state["ocar_preconditioner"] = self.ocar_preconditioner.state_dict()
         if self.ocar_stats is not None:
             state["ocar_stats"] = dataclasses.asdict(self.ocar_stats)
+        if self.ocarpp_preconditioner is not None:
+            state["ocarpp_preconditioner"] = self.ocarpp_preconditioner.state_dict()
+        if self.ocarpp_stats is not None:
+            state["ocarpp_stats"] = dataclasses.asdict(self.ocarpp_stats)
         return state
 
     def load_state_dict(self, state: dict) -> None:
@@ -583,6 +710,10 @@ class ContinualTrainer:
         )
         assert state.get("use_ocar", False) == self.use_ocar, (
             "Checkpoint was saved with a different use_ocar setting than "
+            "this trainer was constructed with."
+        )
+        assert state.get("use_ocarpp", False) == self.use_ocarpp, (
+            "Checkpoint was saved with a different use_ocarpp setting than "
             "this trainer was constructed with."
         )
         self.model.load_state_dict(state["model"])
@@ -617,3 +748,7 @@ class ContinualTrainer:
             self.ocar_preconditioner.load_state_dict(state["ocar_preconditioner"])
         if "ocar_stats" in state and self.ocar_stats is not None:
             self.ocar_stats = OCARStats(**state["ocar_stats"])
+        if "ocarpp_preconditioner" in state and self.ocarpp_preconditioner is not None:
+            self.ocarpp_preconditioner.load_state_dict(state["ocarpp_preconditioner"])
+        if "ocarpp_stats" in state and self.ocarpp_stats is not None:
+            self.ocarpp_stats = OCARPlusPlusStats(**state["ocarpp_stats"])
