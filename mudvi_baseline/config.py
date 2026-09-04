@@ -35,7 +35,7 @@ class ExperimentConfig:
     method: str  # "mudvi" | "er" | "mir" | "gmed"
     data_dir: str
     subjects: list  # e.g. ["01", "02", "03"]
-    dataset: str = "bci2a"  # "bci2a" | "high_gamma" -- see data_high_gamma.py
+    dataset: str = "bci2a"  # "bci2a" | "high_gamma" | "high_gamma_fif" -- see data_high_gamma*.py
     memory_size: int = 200
     epochs_per_subject: int = 15
     new_batch_size: int = 32
@@ -157,14 +157,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          default=os.environ.get("BCICIV_DATA_DIR"),
                          help="For --dataset bci2a: folder containing A0kT.gdf files. "
                               "For --dataset high_gamma: the HGD data/ folder containing "
-                              "train/ and test/ subfolders. Falls back to the "
+                              "train/ and test/ subfolders (raw .mat from GIN). For "
+                              "--dataset high_gamma_fif: the folder containing 'Subject "
+                              "<N>/' subfolders (the buzhichun/high-gamma-dataset-fif "
+                              "Kaggle mirror, used when GIN is unreachable, e.g. from "
+                              "Kaggle -- see data_high_gamma_fif.py). Falls back to the "
                               "BCICIV_DATA_DIR environment variable. Required (via flag "
                               "or env var) -- never hardcode this.")
-    parser.add_argument("--dataset", type=str, default="bci2a", choices=["bci2a", "high_gamma"],
-                         help="bci2a (default, Duan et al.'s BCI IV-2a) or high_gamma "
-                              "(Schirrmeister et al.'s High Gamma Dataset -- not one of "
-                              "Duan et al.'s three datasets, see data_high_gamma.py for "
-                              "the implementation decisions this involves).")
+    parser.add_argument("--dataset", type=str, default="bci2a",
+                         choices=["bci2a", "high_gamma", "high_gamma_fif"],
+                         help="bci2a (default, Duan et al.'s BCI IV-2a); high_gamma "
+                              "(Schirrmeister et al.'s High Gamma Dataset, raw .mat from "
+                              "GIN); or high_gamma_fif (same dataset, pre-processed .fif "
+                              "export from the Kaggle mirror -- use this one on Kaggle, "
+                              "GIN blocks Kaggle's IP range). Not one of Duan et al.'s "
+                              "three datasets either way, see data_high_gamma*.py for the "
+                              "implementation decisions this involves.")
     parser.add_argument("--subjects", type=str, default=",".join(DEFAULT_SUBJECT_ORDER),
                          help="Comma-separated subject order, e.g. 01,02,03 (bci2a) or "
                               "1,2,3 (high_gamma, unpadded 1..14). Default: bci2a's all 9.")

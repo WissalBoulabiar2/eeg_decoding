@@ -33,6 +33,7 @@ import torch
 from .config import parse_config, ExperimentConfig
 from .data import load_subject as load_subject_bci2a
 from .data_high_gamma import load_subject as load_subject_high_gamma
+from .data_high_gamma_fif import load_subject as load_subject_high_gamma_fif
 from .model import MudviCNN
 from .memory import ClassBalancedMemory
 from .er_baseline import ReservoirMemory
@@ -134,7 +135,11 @@ def run(cfg: ExperimentConfig) -> dict:
           f"ocar={cfg.ocar} ocar_plusplus={cfg.ocar_plusplus} seed={cfg.seed} device={device}")
     print(f"[run_experiment] run_dir={run_dir}")
 
-    load_subject = load_subject_bci2a if cfg.dataset == "bci2a" else load_subject_high_gamma
+    load_subject = {
+        "bci2a": load_subject_bci2a,
+        "high_gamma": load_subject_high_gamma,
+        "high_gamma_fif": load_subject_high_gamma_fif,
+    }[cfg.dataset]
 
     print(f"[run_experiment] dataset={cfg.dataset} Loading and segmenting subjects: {cfg.subjects}")
     subjects_data = []
