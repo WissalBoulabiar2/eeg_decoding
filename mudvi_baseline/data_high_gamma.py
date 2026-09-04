@@ -107,9 +107,33 @@ def _eeg_channel_indices(all_sensor_names: list[str]) -> list[int]:
     return indices
 
 
+_HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
+
+
+def _check_hdf5_signature(path: str) -> None:
+    """A failed/incomplete download (e.g. an HTML error page saved under
+    the expected filename by a `wget`/`curl` call that didn't check its
+    own exit status) produces a file that LOOKS present but isn't valid
+    HDF5. h5py's own error for that ("Unable to synchronously open file
+    (file signature not found)") gives no hint that the real problem is
+    upstream of this loader, so check explicitly and say so."""
+    size = os.path.getsize(path) if os.path.exists(path) else -1
+    with open(path, "rb") as f:
+        head = f.read(8)
+    if head != _HDF5_SIGNATURE:
+        raise OSError(
+            f"{path} (size={size} bytes) is not a valid HDF5/.mat file "
+            f"(first 8 bytes were {head!r}, expected the HDF5 signature "
+            f"{_HDF5_SIGNATURE!r}). This means the download of this file "
+            f"failed or was truncated -- delete it and re-download from "
+            f"GIN (see download_high_gamma.sh) before retrying training."
+        )
+
+
 def _load_bbci_mat(path: str):
     """Returns (signal: (n_channels, n_samples) float32 uV, fs: float,
     event_samples: (n_events,) int, event_labels: (n_events,) int 0..3)."""
+    _check_hdf5_signature(path)
     with h5py.File(path, "r") as h5file:
         fs = float(h5file["nfo"]["fs"][0, 0])
         n_samples = int(h5file["nfo"]["T"][0, 0])
