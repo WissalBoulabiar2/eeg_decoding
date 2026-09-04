@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 from .config import parse_config, ExperimentConfig
-from .data import load_subject as load_subject_bci2a
+from .data import load_subject as load_subject_bci2a, SEGMENT_LEN
 from .data_high_gamma import load_subject as load_subject_high_gamma
 from .data_high_gamma_fif import load_subject as load_subject_high_gamma_fif
 from .model import MudviCNN
@@ -50,15 +50,22 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
-def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
+def build_trainer(cfg: ExperimentConfig, model, device, num_channels: int) -> ContinualTrainer:
     """Method dispatch. Each branch uses the SAME model class, optimizer
     (Adam, lr=cfg.lr), batch sizes, epoch count, and memory budget --
     the only thing that differs between methods is memory policy
     (class-balanced vs. global reservoir) and retrieval strategy (MIR's
     interference ranking vs. uniform sampling), per the fairness
-    protocol (Section 9)."""
+    protocol (Section 9).
+
+    `num_channels` must be passed through to every memory buffer's
+    `seg_shape` -- their constructors default to `(22, 400)` (BCI IV-2a's
+    shape), which silently corrupts any other dataset's segments on the
+    first `memory.update()` call (a concatenate of differently-shaped
+    arrays), rather than failing at construction time."""
+    seg_shape = (num_channels, SEGMENT_LEN)
     if cfg.method == "mudvi":
-        memory = ClassBalancedMemory(capacity=cfg.memory_size, seed=cfg.seed)
+        memory = ClassBalancedMemory(capacity=cfg.memory_size, seg_shape=seg_shape, seed=cfg.seed)
         return ContinualTrainer(
             model, memory, device, lr=cfg.lr,
             new_batch_size=cfg.new_batch_size, mem_batch_size=cfg.mem_batch_size,
@@ -78,7 +85,7 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             ocarpp_eps=cfg.ocarpp_eps,
         )
     if cfg.method == "er":
-        memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
+        memory = ReservoirMemory(capacity=cfg.memory_size, seg_shape=seg_shape, seed=cfg.seed)
         return ContinualTrainer(
             model, memory, device, lr=cfg.lr,
             new_batch_size=cfg.new_batch_size, mem_batch_size=cfg.mem_batch_size,
@@ -86,7 +93,7 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             use_gradient_projection=False, relationship_shift_detection=False,
         )
     if cfg.method == "mir":
-        memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
+        memory = ReservoirMemory(capacity=cfg.memory_size, seg_shape=seg_shape, seed=cfg.seed)
         return MIRTrainer(
             model, memory, device, lr=cfg.lr,
             new_batch_size=cfg.new_batch_size, mem_batch_size=cfg.mem_batch_size,
@@ -94,7 +101,7 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             use_gradient_projection=False, relationship_shift_detection=False,
         )
     if cfg.method == "gmed":
-        memory = ReservoirMemory(capacity=cfg.memory_size, seed=cfg.seed)
+        memory = ReservoirMemory(capacity=cfg.memory_size, seg_shape=seg_shape, seed=cfg.seed)
         return GMEDTrainer(
             model, memory, device, lr=cfg.lr,
             new_batch_size=cfg.new_batch_size, mem_batch_size=cfg.mem_batch_size,
@@ -150,7 +157,7 @@ def run(cfg: ExperimentConfig) -> dict:
 
     num_channels = subjects_data[0].X_train.shape[1]
     model = MudviCNN(num_channels=num_channels)
-    trainer = build_trainer(cfg, model, device)
+    trainer = build_trainer(cfg, model, device, num_channels)
 
     start_step = 0
     if existing_ckpt is not None:
