@@ -25,7 +25,7 @@ DEFAULT_SUBJECT_ORDER = [f"{i:02d}" for i in range(1, 10)]  # 01..09
 # clear message instead of a confusing traceback deep in
 # run_experiment.py. GMED (gmed_baseline.GMEDTrainer) was the last method
 # added -- see IMPLEMENTATION_MAPPING.md for what each method covers.
-IMPLEMENTED_METHODS = {"mudvi", "er", "mir", "gmed"}
+IMPLEMENTED_METHODS = {"mudvi", "er", "mir", "gmed", "joint"}
 KNOWN_UNIMPLEMENTED_METHODS = set()
 ALL_METHODS = IMPLEMENTED_METHODS | KNOWN_UNIMPLEMENTED_METHODS
 
@@ -130,6 +130,16 @@ class ExperimentConfig:
         subj = "-".join(self.subjects)
         return f"{self.result_subdir()}_seed{self.seed}_mem{self.memory_size}_subj{subj}"
 
+    def run_dir(self) -> str:
+        """results/[<dataset>/]<result_subdir>/<run_id>/ -- dataset is
+        only inserted for non-default datasets, so BCI IV-2a's existing
+        results/<result_subdir>/<run_id>/ layout (documented in
+        LIGHTNING_MIGRATION.md) stays byte-identical. Shared by
+        run_experiment.py and run_subject_order.py so both agree on where
+        a given config's results live."""
+        dataset_parts = [] if self.dataset == "bci2a" else [self.dataset]
+        return os.path.join(self.out_dir, *dataset_parts, self.result_subdir(), self.run_id())
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -230,7 +240,7 @@ def parse_config(argv=None) -> ExperimentConfig:
             "No dataset path given: pass --data_dir or set the BCICIV_DATA_DIR "
             "environment variable (see LIGHTNING_MIGRATION.md)."
         )
-    if args.method in ("er", "mir", "gmed") and (
+    if args.method in ("er", "mir", "gmed", "joint") and (
         args.gradient_projection or args.relationship_shift_detection or args.ocar
         or args.ocar_plusplus
     ):

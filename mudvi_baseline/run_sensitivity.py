@@ -80,14 +80,15 @@ def main(argv=None):
     base_cfg = parse_config(_strip_sweep_flags(base_argv))
 
     result_subdir = base_cfg.result_subdir()
-    sweep_dir = os.path.join(base_cfg.out_dir, "sensitivity", f"{result_subdir}__{param}")
+    dataset_parts = [] if base_cfg.dataset == "bci2a" else [base_cfg.dataset]
+    sweep_dir = os.path.join(base_cfg.out_dir, *dataset_parts, "sensitivity", f"{result_subdir}__{param}")
     os.makedirs(sweep_dir, exist_ok=True)
 
     rows = []
     for value in values:
         run_name = f"sens_{param}_{value}_seed{base_cfg.seed}_mem{base_cfg.memory_size}_subj{'-'.join(base_cfg.subjects)}"
         cfg = replace(base_cfg, **{param: value}, run_name=run_name)
-        run_dir = os.path.join(cfg.out_dir, cfg.result_subdir(), cfg.run_id())
+        run_dir = cfg.run_dir()
         metrics_path = os.path.join(run_dir, "metrics.json")
         if os.path.exists(metrics_path):
             # Sweep restarted after an interruption (e.g. a Lightning AI

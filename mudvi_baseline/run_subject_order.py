@@ -81,14 +81,15 @@ def main(argv=None):
     orders = _distinct_permutations(base_cfg.subjects, num_orders, order_seed)
 
     result_subdir = base_cfg.result_subdir()
-    sweep_dir = os.path.join(base_cfg.out_dir, "subject_order", result_subdir)
+    dataset_parts = [] if base_cfg.dataset == "bci2a" else [base_cfg.dataset]
+    sweep_dir = os.path.join(base_cfg.out_dir, *dataset_parts, "subject_order", result_subdir)
     os.makedirs(sweep_dir, exist_ok=True)
 
     rows = []
     for i, order in enumerate(orders):
         run_name = f"subjorder_{i:02d}_seed{base_cfg.seed}_mem{base_cfg.memory_size}_subj{'-'.join(order)}"
         cfg = replace(base_cfg, subjects=order, run_name=run_name)
-        run_dir = os.path.join(cfg.out_dir, cfg.result_subdir(), cfg.run_id())
+        run_dir = cfg.run_dir()
         metrics_path = os.path.join(run_dir, "metrics.json")
         if os.path.exists(metrics_path):
             # Sweep restarted after an interruption (e.g. a Lightning AI

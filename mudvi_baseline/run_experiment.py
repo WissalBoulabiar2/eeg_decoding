@@ -39,6 +39,7 @@ from .er_baseline import ReservoirMemory
 from .trainer import ContinualTrainer
 from .mir_baseline import MIRTrainer
 from .gmed_baseline import GMEDTrainer
+from .joint_baseline import JointTrainer
 from .metrics import compute_bwt, compute_forgetting
 from . import checkpoint as ckpt
 
@@ -100,6 +101,11 @@ def build_trainer(cfg: ExperimentConfig, model, device) -> ContinualTrainer:
             use_gradient_projection=False, relationship_shift_detection=False,
             edit_lr=cfg.gmed_edit_lr,
         )
+    if cfg.method == "joint":
+        return JointTrainer(
+            model, device, lr=cfg.lr, new_batch_size=cfg.new_batch_size,
+            epochs_per_subject=cfg.epochs_per_subject, seed=cfg.seed,
+        )
     raise ValueError(f"Unknown method: {cfg.method!r}")
 
 
@@ -113,11 +119,7 @@ def run(cfg: ExperimentConfig) -> dict:
     set_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # dataset is namespaced into the results path only for non-default
-    # datasets, so BCI IV-2a's existing results/<result_subdir>/<run_id>/
-    # layout (documented in LIGHTNING_MIGRATION.md) stays unchanged.
-    dataset_parts = [] if cfg.dataset == "bci2a" else [cfg.dataset]
-    run_dir = os.path.join(cfg.out_dir, *dataset_parts, cfg.result_subdir(), cfg.run_id())
+    run_dir = cfg.run_dir()
     existing_ckpt = ckpt.find_latest_checkpoint(run_dir)
     if existing_ckpt is not None and not cfg.resume:
         raise SystemExit(
