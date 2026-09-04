@@ -31,7 +31,8 @@ import numpy as np
 import torch
 
 from .config import parse_config, ExperimentConfig
-from .data import load_subject
+from .data import load_subject as load_subject_bci2a
+from .data_high_gamma import load_subject as load_subject_high_gamma
 from .model import MudviCNN
 from .memory import ClassBalancedMemory
 from .er_baseline import ReservoirMemory
@@ -112,7 +113,11 @@ def run(cfg: ExperimentConfig) -> dict:
     set_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    run_dir = os.path.join(cfg.out_dir, cfg.result_subdir(), cfg.run_id())
+    # dataset is namespaced into the results path only for non-default
+    # datasets, so BCI IV-2a's existing results/<result_subdir>/<run_id>/
+    # layout (documented in LIGHTNING_MIGRATION.md) stays unchanged.
+    dataset_parts = [] if cfg.dataset == "bci2a" else [cfg.dataset]
+    run_dir = os.path.join(cfg.out_dir, *dataset_parts, cfg.result_subdir(), cfg.run_id())
     existing_ckpt = ckpt.find_latest_checkpoint(run_dir)
     if existing_ckpt is not None and not cfg.resume:
         raise SystemExit(
@@ -127,14 +132,17 @@ def run(cfg: ExperimentConfig) -> dict:
           f"ocar={cfg.ocar} ocar_plusplus={cfg.ocar_plusplus} seed={cfg.seed} device={device}")
     print(f"[run_experiment] run_dir={run_dir}")
 
-    print(f"[run_experiment] Loading and segmenting subjects: {cfg.subjects}")
+    load_subject = load_subject_bci2a if cfg.dataset == "bci2a" else load_subject_high_gamma
+
+    print(f"[run_experiment] dataset={cfg.dataset} Loading and segmenting subjects: {cfg.subjects}")
     subjects_data = []
     for sid in cfg.subjects:
         sd = load_subject(sid, cfg.data_dir, test_fraction=cfg.test_fraction, seed=cfg.seed)
-        print(f"  A{sid}T: train segments={len(sd.y_train)}, test segments={len(sd.y_test)}")
+        print(f"  subject {sid}: train segments={len(sd.y_train)}, test segments={len(sd.y_test)}")
         subjects_data.append(sd)
 
-    model = MudviCNN()
+    num_channels = subjects_data[0].X_train.shape[1]
+    model = MudviCNN(num_channels=num_channels)
     trainer = build_trainer(cfg, model, device)
 
     start_step = 0

@@ -35,6 +35,7 @@ class ExperimentConfig:
     method: str  # "mudvi" | "er" | "mir" | "gmed"
     data_dir: str
     subjects: list  # e.g. ["01", "02", "03"]
+    dataset: str = "bci2a"  # "bci2a" | "high_gamma" -- see data_high_gamma.py
     memory_size: int = 200
     epochs_per_subject: int = 15
     new_batch_size: int = 32
@@ -144,11 +145,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "--relationship_shift_detection), er, mir, or gmed.")
     parser.add_argument("--data_dir", type=str,
                          default=os.environ.get("BCICIV_DATA_DIR"),
-                         help="Path to the folder containing A0kT.gdf files. "
-                              "Falls back to the BCICIV_DATA_DIR environment variable. "
-                              "Required (via flag or env var) -- never hardcode this.")
+                         help="For --dataset bci2a: folder containing A0kT.gdf files. "
+                              "For --dataset high_gamma: the HGD data/ folder containing "
+                              "train/ and test/ subfolders. Falls back to the "
+                              "BCICIV_DATA_DIR environment variable. Required (via flag "
+                              "or env var) -- never hardcode this.")
+    parser.add_argument("--dataset", type=str, default="bci2a", choices=["bci2a", "high_gamma"],
+                         help="bci2a (default, Duan et al.'s BCI IV-2a) or high_gamma "
+                              "(Schirrmeister et al.'s High Gamma Dataset -- not one of "
+                              "Duan et al.'s three datasets, see data_high_gamma.py for "
+                              "the implementation decisions this involves).")
     parser.add_argument("--subjects", type=str, default=",".join(DEFAULT_SUBJECT_ORDER),
-                         help="Comma-separated subject order, e.g. 01,02,03. Default: all 9, in order.")
+                         help="Comma-separated subject order, e.g. 01,02,03 (bci2a) or "
+                              "1,2,3 (high_gamma, unpadded 1..14). Default: bci2a's all 9.")
     parser.add_argument("--memory_size", type=int, default=200)
     parser.add_argument("--epochs_per_subject", type=int, default=15)
     parser.add_argument("--new_batch_size", type=int, default=32)
@@ -245,6 +254,7 @@ def parse_config(argv=None) -> ExperimentConfig:
         method=args.method,
         data_dir=args.data_dir,
         subjects=args.subjects.split(","),
+        dataset=args.dataset,
         memory_size=args.memory_size,
         epochs_per_subject=args.epochs_per_subject,
         new_batch_size=args.new_batch_size,
